@@ -1,0 +1,23 @@
+/* Reset global para evitar conflictos con plantilla Vite */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', system-ui, -apple-system, Roboto, Arial, sans-serif;
+  background-color: #F4F7FA;
+  color: #1E293B;
+  text-align: left;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  border: none !important;
+  text-align: left !important;
+  min-height: 100vh;
+}
