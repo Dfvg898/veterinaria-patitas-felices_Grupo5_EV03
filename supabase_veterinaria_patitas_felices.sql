@@ -230,7 +230,29 @@ ALTER TABLE public.ventas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.gastos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recordatorios ENABLE ROW LEVEL SECURITY;
 
--- Politicas RLS para personal autenticado de la clinica (TO authenticated)
+-- =============================================================================
+-- 11. CONTROL DE ACCESO POR ROL (RBAC) EN RLS  -  OWASP A01 (Broken Access Control)
+-- Reemplaza las politicas "USING (true)" por politicas que consultan el rol real
+-- del usuario autenticado (usuarios_clinica.auth_user_id = auth.uid()).
+-- Denegar por defecto: sin fila en usuarios_clinica (o cuenta inactiva/bloqueada)
+-- => sin acceso a ninguna tabla clinica.
+-- =============================================================================
+
+-- Funcion auxiliar: rol del usuario autenticado. SECURITY DEFINER para evitar
+-- recursion de RLS sobre usuarios_clinica; search_path fijo por seguridad.
+CREATE OR REPLACE FUNCTION public.rol_actual()
+RETURNS TEXT
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT rol FROM public.usuarios_clinica
+    WHERE auth_user_id = auth.uid() AND activo = true AND bloqueado = false
+    LIMIT 1;
+$$;
+REVOKE ALL ON FUNCTION public.rol_actual() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.rol_actual() TO authenticated;
+
+-- Limpieza de politicas permisivas de versiones anteriores
 DO $$
 DECLARE
     t TEXT;
@@ -241,9 +263,51 @@ BEGIN
     ]
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS "Personal autenticado lectura %I" ON public.%I;', t, t);
-        EXECUTE format('CREATE POLICY "Personal autenticado lectura %I" ON public.%I FOR SELECT TO authenticated USING (true);', t, t);
-
         EXECUTE format('DROP POLICY IF EXISTS "Personal autenticado escritura %I" ON public.%I;', t, t);
-        EXECUTE format('CREATE POLICY "Personal autenticado escritura %I" ON public.%I FOR ALL TO authenticated USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);', t, t);
     END LOOP;
 END $$;
+
+-- Procedimiento que crea 1 politica de lectura y 1 de escritura por tabla,
+-- segun la matriz de roles definida en src/data/seedVeterinaria.js (ROLES_PERMISOS).
+CREATE OR REPLACE PROCEDURE public.aplicar_politicas_rol(
+    tabla TEXT, roles_lectura TEXT[], roles_escritura TEXT[]
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+    EXECUTE format('DROP POLICY IF EXISTS "rbac_lectura" ON public.%I;', tabla);
+    EXECUTE format('DROP POLICY IF EXISTS "rbac_escritura" ON public.%I;', tabla);
+    EXECUTE format(
+        'CREATE POLICY "rbac_lectura" ON public.%I FOR SELECT TO authenticated USING (public.rol_actual() = ANY (%L::text[]));',
+        tabla, roles_lectura);
+    EXECUTE format(
+        'CREATE POLICY "rbac_escritura" ON public.%I FOR ALL TO authenticated USING (public.rol_actual() = ANY (%L::text[])) WITH CHECK (public.rol_actual() = ANY (%L::text[]));',
+        tabla, roles_escritura, roles_escritura);
+END $$;
+
+--                                    tabla               lectura                                                   escritura
+CALL public.aplicar_politicas_rol('clientes',          ARRAY['Administrador','Veterinario','Recepcionista'],     ARRAY['Administrador','Recepcionista']);
+CALL public.aplicar_politicas_rol('mascotas',          ARRAY['Administrador','Veterinario','Recepcionista','Asistente'], ARRAY['Administrador','Recepcionista','Veterinario']);
+CALL public.aplicar_politicas_rol('citas',             ARRAY['Administrador','Veterinario','Recepcionista','Asistente'], ARRAY['Administrador','Recepcionista','Veterinario']);
+CALL public.aplicar_politicas_rol('atenciones',        ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Veterinario']);
+CALL public.aplicar_politicas_rol('vacunas',           ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Veterinario','Asistente']);
+CALL public.aplicar_politicas_rol('productos',         ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador']);
+CALL public.aplicar_politicas_rol('movimientos_stock', ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Asistente']);
+CALL public.aplicar_politicas_rol('ventas',            ARRAY['Administrador','Recepcionista'],                   ARRAY['Administrador','Recepcionista']);
+CALL public.aplicar_politicas_rol('gastos',            ARRAY['Administrador'],                                   ARRAY['Administrador']);
+CALL public.aplicar_politicas_rol('recordatorios',     ARRAY['Administrador','Recepcionista'],                   ARRAY['Administrador','Recepcionista']);
+
+-- usuarios_clinica: el Administrador gestiona todo; cada usuario solo ve su propia fila.
+DROP POLICY IF EXISTS "rbac_lectura" ON public.usuarios_clinica;
+DROP POLICY IF EXISTS "rbac_escritura" ON public.usuarios_clinica;
+CREATE POLICY "rbac_lectura" ON public.usuarios_clinica FOR SELECT TO authenticated
+    USING (public.rol_actual() = 'Administrador' OR auth_user_id = auth.uid());
+CREATE POLICY "rbac_escritura" ON public.usuarios_clinica FOR ALL TO authenticated
+    USING (public.rol_actual() = 'Administrador') WITH CHECK (public.rol_actual() = 'Administrador');
+
+-- Integridad adicional (OWASP A06 Insecure Design): valores no negativos
+ALTER TABLE public.productos DROP CONSTRAINT IF EXISTS productos_stock_no_negativo;
+ALTER TABLE public.productos ADD CONSTRAINT productos_stock_no_negativo CHECK (stock >= 0 AND precio >= 0);
+ALTER TABLE public.movimientos_stock DROP CONSTRAINT IF EXISTS mov_cantidad_positiva;
+ALTER TABLE public.movimientos_stock ADD CONSTRAINT mov_cantidad_positiva CHECK (cantidad > 0);
+ALTER TABLE public.ventas DROP CONSTRAINT IF EXISTS ventas_total_no_negativo;
+ALTER TABLE public.ventas ADD CONSTRAINT ventas_total_no_negativo CHECK (total >= 0 AND saldo_pendiente >= 0);

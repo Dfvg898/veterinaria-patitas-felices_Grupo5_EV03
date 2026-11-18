@@ -36,6 +36,8 @@ function App() {
   const [alertaGlobal, setAlertaGlobal] = useState(null)
   const [modoOffline, setModoOffline] = useState(false)
   const [moduloActual, setModuloActual] = useState('dashboard')
+  // Rol con el que realmente se autenticó la sesión (el selector de rol demo no puede ampliarlo)
+  const [rolSesion, setRolSesion] = useState(null)
 
   // 2. Estado de Datos Clínicos con Caché Local Sincronizado (RNF04, RNF07)
   const [usuarios, setUsuarios] = useState(() => loadLocal('vet_usuarios_v3', INITIAL_USUARIOS))
@@ -149,7 +151,7 @@ function App() {
         return
       }
       if (u.bloqueado) {
-        notificar('error', `SEGURIDAD (RF04 / OWASP ASVS V2.2.1): Cuenta bloqueada por superar 3 intentos fallidos. Solicite desbloqueo al Administrador.`)
+        notificar('error', `SEGURIDAD (RF04 / OWASP ASVS v5 cap. V6 Autenticación): Cuenta bloqueada por superar 3 intentos fallidos. Solicite desbloqueo al Administrador.`)
         return
       }
       if (u.pass !== passLogin) {
@@ -170,6 +172,7 @@ function App() {
       copia[idx] = { ...u, intentos: 0 }
       setUsuarios(copia)
       setUsuarioActivo(copia[idx])
+      setRolSesion(copia[idx].rol)
       setRespTarea(copia[idx].correo)
       setModuloActual('dashboard')
       cargarTareasSupabase()
@@ -190,11 +193,12 @@ function App() {
         nombre: `Usuario Supabase (${data.user.email})`,
         rut: '19.000.000-1',
         correo: data.user.email,
-        rol: 'Administrador',
+        rol: 'Asistente', // mínimo privilegio por defecto (OWASP A01: denegar por defecto)
         especialidad: 'Cuenta Autenticada Supabase JWT',
         activo: true
       }
       setUsuarioActivo(perfilSupabase)
+      setRolSesion(perfilSupabase.rol)
       setRespTarea(data.user.email)
       cargarTareasSupabase()
       notificar('success', `Autenticado vía Supabase Auth JWT (${data.user.email}). Políticas RLS activas.`)
@@ -209,6 +213,7 @@ function App() {
       setUsuarios(desbloq)
     }
     setUsuarioActivo({ ...u, intentos: 0, bloqueado: false })
+    setRolSesion(u.rol)
     setRespTarea(u.correo)
     setModuloActual('dashboard')
     cargarTareasSupabase()
@@ -227,7 +232,7 @@ function App() {
       copia[idx] = { ...u, intentos: nuevos, bloqueado: bloq }
       setUsuarios(copia)
       if (bloq) {
-        notificar('error', `DEMO RF04: Cuenta ${u.correo} BLOQUEADA tras 3 intentos fallidos consecutivos (OWASP ASVS V2.2.1).`)
+        notificar('error', `DEMO RF04: Cuenta ${u.correo} BLOQUEADA tras 3 intentos fallidos consecutivos (OWASP ASVS v5 cap. V6 Autenticación).`)
       } else {
         notificar('warning', `DEMO RF04: Intento fallido ${nuevos}/3 registrado para ${u.correo}.`)
       }
@@ -237,11 +242,17 @@ function App() {
   async function cerrarSesionCompleta() {
     await supabase.auth.signOut().catch(() => {})
     setUsuarioActivo(null)
+    setRolSesion(null)
     setCorreoLogin('')
     setPassLogin('')
   }
 
   function cambiarRolEnVivo(nuevoRol) {
+    // Control de acceso: solo una sesión autenticada como Administrador puede previsualizar otros roles
+    if (rolSesion !== 'Administrador' || !ROLES_PERMISOS[nuevoRol]) {
+      notificar('error', 'RESTRICCIÓN (OWASP A01): solo el Administrador puede previsualizar otros roles.')
+      return
+    }
     const encontrado = usuarios.find(u => u.rol === nuevoRol) || {
       ...usuarioActivo,
       rol: nuevoRol,
@@ -805,9 +816,12 @@ function App() {
     )
   }
 
-  const permisosRol = ROLES_PERMISOS[usuarioActivo.rol] || ROLES_PERMISOS.Administrador
+  const permisosRol = ROLES_PERMISOS[usuarioActivo.rol] || ROLES_PERMISOS.Asistente
   const mascotaActivaObj = mascotas.find(m => m.id === mascotaFichaSel) || mascotas[0]
   const clienteMascotaActiva = clientes.find(c => c.id === mascotaActivaObj?.clienteId)
+
+  // Guardia de ruta: nunca se renderiza un módulo que el rol no tenga permitido (OWASP A01)
+  const moduloVisible = permisosRol.modulos.includes(moduloActual) ? moduloActual : 'dashboard'
 
   const MENU_ITEMS = [
     { id: 'dashboard', label: '1. Panel General Clínica', badge: 'KPIs' },
@@ -867,7 +881,7 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div>Supabase: <strong>lgfsicqrpfqfeqjdrgoe</strong></div>
+          <div>Backend: <strong>Supabase (PostgreSQL + Auth)</strong></div>
           <div>Protección: <strong>RLS + JWT + Ley 21.719</strong></div>
         </div>
       </aside>
@@ -885,6 +899,7 @@ function App() {
               {modoOffline ? '⚡ Modo Sin Conexión Activo (Caché Local RNF04)' : '🟢 Supabase Cloud + RLS Sincronizado'}
             </span>
 
+            {rolSesion === 'Administrador' && (
             <div className="role-switcher-bar">
               <strong>Cambiar Rol (Demo):</strong>
               <select value={usuarioActivo.rol} onChange={(e) => cambiarRolEnVivo(e.target.value)}>
@@ -894,6 +909,7 @@ function App() {
                 <option value="Asistente">Asistente (Vacunas y Stock)</option>
               </select>
             </div>
+            )}
 
             <button type="button" className="btn-danger-vet" onClick={cerrarSesionCompleta}>
               Cerrar sesión
@@ -911,7 +927,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 1: DASHBOARD GENERAL
               =============================================================== */}
-          {moduloActual === 'dashboard' && (
+          {moduloVisible === 'dashboard' && (
             <div>
               <div className="kpi-grid">
                 <div className="kpi-card urgent">
@@ -1061,7 +1077,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 2: CLIENTES Y MASCOTAS (CU03 | RF05-RF09, RF16, RNF03)
               =============================================================== */}
-          {moduloActual === 'clientes' && (
+          {moduloVisible === 'clientes' && (
             <div>
               <div className="card-panel">
                 <h3>
@@ -1214,7 +1230,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 3: AGENDA DE CITAS Y URGENCIAS (CU04, CU05, CU06, CU11)
               =============================================================== */}
-          {moduloActual === 'citas' && (
+          {moduloVisible === 'citas' && (
             <div className="panel-grid-sidebar">
               <div className="card-panel">
                 <h3>
@@ -1372,7 +1388,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 4: FICHAS CLÍNICAS Y VACUNAS (CU07, CU08, CU09 | RF16-RF20)
               =============================================================== */}
-          {moduloActual === 'fichas' && (
+          {moduloVisible === 'fichas' && (
             <div>
               <div className="card-panel">
                 <h3>
@@ -1533,7 +1549,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 5: RECORDATORIOS AUTOMÁTICOS (CU10 | RF22-RF24)
               =============================================================== */}
-          {moduloActual === 'recordatorios' && (
+          {moduloVisible === 'recordatorios' && (
             <div>
               <div className="card-panel">
                 <h3>
@@ -1586,7 +1602,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 6: INVENTARIO, KARDEX Y ALERTAS (CU12, CU13, CU14 | RF25-RF30)
               =============================================================== */}
-          {moduloActual === 'inventario' && (
+          {moduloVisible === 'inventario' && (
             <div>
               <div className="panel-grid-2">
                 <div className="card-panel">
@@ -1758,7 +1774,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 7: VENTAS, COBROS Y GASTOS (CU15, CU16 | RF31-RF33)
               =============================================================== */}
-          {moduloActual === 'finanzas' && (
+          {moduloVisible === 'finanzas' && (
             <div>
               <div className="panel-grid-2">
                 <div className="card-panel">
@@ -1927,7 +1943,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 8: REPORTES EXPORTABLES A EXCEL / PDF (CU17 | RF34)
               =============================================================== */}
-          {moduloActual === 'reportes' && (
+          {moduloVisible === 'reportes' && (
             <div>
               <div className="card-panel">
                 <h3>
@@ -1989,7 +2005,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 9: USUARIOS, ROLES Y SEGURIDAD (CU02 | RF01-RF04)
               =============================================================== */}
-          {moduloActual === 'usuarios' && (
+          {moduloVisible === 'usuarios' && (
             <div className="panel-grid-sidebar">
               <div className="card-panel">
                 <h3>
@@ -2078,7 +2094,7 @@ function App() {
           {/* ===============================================================
               MÓDULO 10: MIS TAREAS SUPABASE AUTH & RLS (ETAPA 5 GRUPO 5)
               =============================================================== */}
-          {moduloActual === 'tareas_rls' && (
+          {moduloVisible === 'tareas_rls' && (
             <div className="panel-grid-2">
               <div className="card-panel">
                 <h3>

@@ -1,0 +1,504 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..ddd3205
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,5 @@
++# Copia este archivo a .env y completa con los datos de tu proyecto Supabase
++# (Project Settings > API). Nunca subas .env al repositorio.
++VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
++VITE_SUPABASE_ANON_KEY=TU_CLAVE_ANON_PUBLICA
++# La clave service_role NUNCA debe ir en el frontend (variables VITE_* quedan expuestas al navegador).
+diff --git a/README.md b/README.md
+index 656abb4..eb63f37 100644
+--- a/README.md
++++ b/README.md
+@@ -12,7 +12,9 @@ Prototipo web funcional desarrollado sobre el **Stack Tecnológico Oficial** (**
+ 
+ ## 2. Ejecución Local (Paso a Paso)
+ ```bash
+-cd veterinaria-patitas-felices
++git clone https://github.com/Dfvg898/grupo5ev03.git
++cd grupo5ev03
++cp .env.example .env     # completar VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
+ npm install
+ npm run dev
+ ```
+@@ -35,5 +37,17 @@ En la pantalla de inicio de sesión puedes usar los **4 botones de acceso rápid
+ ---
+ 
+ ## 4. Base de Datos y Políticas RLS en Supabase
+-* **Endpoint conectado en `.env`:** `https://lgfsicqrpfqfeqjdrgoe.supabase.co`
++* **Configuración:** las credenciales de Supabase van en `.env` (ver `.env.example`); el archivo `.env` no se sube a Git.
+ * **Script SQL completo (Tablas + Políticas RLS):** Disponible en el archivo [`supabase_veterinaria_patitas_felices.sql`](./supabase_veterinaria_patitas_felices.sql) para ejecutar en el **SQL Editor** de Supabase.
++* **Control de acceso en la base de datos:** el script define la función `rol_actual()` y políticas RLS por rol (sección 11), alineadas con la matriz de permisos del frontend. Para usarlas, cada usuario de `usuarios_clinica` debe enlazarse a su cuenta de Supabase Auth mediante `auth_user_id`.
++
++---
++
++## 5. Documentación de las Actividades 4 y 5
++* [Actividad 4 – Tecnologías para ofrecer el sistema como SaaS](./docs/ACTIVIDAD4_SaaS.md)
++* [Actividad 5 – OWASP (Top 10 2025 y ASVS 5.0)](./docs/ACTIVIDAD5_OWASP.md)
++
++## 6. Limitaciones conocidas del prototipo
++* Los datos clínicos del prototipo se guardan en `localStorage` (modo demostración / sin conexión, RNF04); solo la tabla `tareas` usa Supabase en vivo.
++* Las cuentas internas de demostración usan contraseña en texto plano en el navegador. **No usar en producción**: debe migrarse a Supabase Auth con bloqueo aplicado en el servidor.
++* El selector «Cambiar Rol (Demo)» solo está disponible para sesiones autenticadas como Administrador.
+diff --git a/docs/ACTIVIDAD4_SaaS.md b/docs/ACTIVIDAD4_SaaS.md
+new file mode 100644
+index 0000000..115e832
+--- /dev/null
++++ b/docs/ACTIVIDAD4_SaaS.md
+@@ -0,0 +1,54 @@
++# Actividad 4 – Tecnologías para ofrecer el sistema como SaaS
++
++**Sistema:** Gestión Clínica y Operativa "Veterinaria Patitas Felices" (Sede Arica)
++
++El prototipo se ofrecería como **SaaS multi‑clínica**: una sola plataforma en la nube, atendida por el proveedor (el grupo), a la que cada veterinaria accede por navegador mediante suscripción. A continuación se describen las 6 categorías solicitadas, qué tecnología se propone para cada una y por qué es pertinente.
++
++| # | Categoría | Tecnología propuesta | Modelo de servicio |
++|---|-----------|----------------------|--------------------|
++| 1 | Plataforma de despliegue en la nube | **Vercel** (frontend React/Vite) | PaaS |
++| 2 | Base de datos en la nube | **Supabase PostgreSQL** gestionado | PaaS / DBaaS |
++| 3 | Autenticación y control de acceso | **Supabase Auth (JWT)** + **RLS** + RBAC | PaaS |
++| 4 | Almacenamiento de archivos | **Supabase Storage** (compatible S3) | PaaS / IaaS |
++| 5 | Facturación / suscripciones | **Stripe Billing** (alternativa local: Flow / Mercado Pago) | SaaS de terceros |
++| 6 | Monitoreo y seguridad básica | **Sentry** + logs de Supabase/Vercel + **UptimeRobot**, HTTPS/HSTS, copias automáticas | SaaS de terceros |
++
++## 1. Plataforma de despliegue en la nube – Vercel
++- **Qué es:** plataforma PaaS que compila el proyecto Vite desde GitHub y lo publica en una CDN global con HTTPS automático.
++- **Por qué:** es parte del stack oficial del curso; cada `git push` genera un despliegue (CI/CD) y *preview* por rama; escala sin administrar servidores. Variables de entorno (`VITE_SUPABASE_*`) se configuran en el panel, no en el código.
++- **Alternativas consideradas:** Netlify, AWS Amplify (más configuración), servidor propio en IaaS (AWS EC2 / DigitalOcean; más control pero más costo operativo).
++
++## 2. Base de datos en la nube – Supabase (PostgreSQL)
++- **Qué es:** PostgreSQL administrado con respaldos, replicación y API REST autogenerada.
++- **Por qué:** el modelo es relacional (clientes → mascotas → citas → atenciones → ventas), requiere integridad referencial y transacciones. El script `supabase_veterinaria_patitas_felices.sql` crea 12 tablas con restricciones `CHECK`.
++- **Multi‑tenant:** para ofrecerlo a varias clínicas se agrega una columna `clinica_id` a cada tabla y las políticas RLS filtran por ella (aislamiento lógico entre clientes del SaaS).
++
++## 3. Autenticación y control de acceso – Supabase Auth + RLS
++- **Autenticación:** Supabase Auth emite JWT, almacena contraseñas con hash (bcrypt) y permite MFA, recuperación de contraseña y proveedores OAuth.
++- **Autorización:** función `rol_actual()` + políticas RLS por rol (Administrador, Veterinario, Recepcionista, Asistente), alineadas con la matriz `ROLES_PERMISOS` del frontend. El frontend solo oculta opciones; **la barrera real está en la base de datos**.
++- **Pertinencia:** datos clínicos y financieros de clientes exigen separación de funciones (Ley 21.719 de protección de datos personales).
++
++## 4. Almacenamiento de archivos – Supabase Storage
++- **Uso previsto:** exámenes de laboratorio, radiografías, fotos de mascotas, comprobantes y reportes PDF de la ficha clínica.
++- **Por qué:** integra las mismas políticas RLS (un archivo solo es visible para usuarios autorizados), URL firmadas con expiración y límites de tamaño/tipo MIME. Alternativa: Amazon S3.
++
++## 5. Facturación y suscripciones – Stripe Billing
++- **Qué resuelve:** planes mensuales por clínica (p. ej. Básico / Profesional), cobro recurrente, reintentos de pago, portal de cliente y *webhooks* que activan o suspenden la cuenta de la clínica.
++- **Seguridad:** el cobro se realiza en la página alojada por Stripe; el sistema nunca almacena datos de tarjeta (reduce el alcance PCI‑DSS). Los webhooks se verifican con firma y se procesan en una *Edge Function* de Supabase.
++- **Para Chile:** facturación electrónica SII mediante un proveedor DTE (p. ej. Bsale / OpenFactura) y pasarelas locales (Flow, Webpay).
++
++## 6. Monitoreo y seguridad básica
++| Aspecto | Herramienta / práctica |
++|---------|------------------------|
++| Errores en frontend | Sentry |
++| Disponibilidad | UptimeRobot o Better Stack (alertas por correo) |
++| Logs de auditoría | Logs de Supabase (Auth, API, Postgres) y de Vercel |
++| Transporte | HTTPS obligatorio, HSTS, cabeceras CSP/`X-Content-Type-Options` en `vercel.json` |
++| Respaldos | Backups diarios automáticos de Supabase + prueba de restauración trimestral |
++| Secretos | Variables de entorno en Vercel; `service_role` solo en backend/Edge Functions |
++| Dependencias | `npm audit` y Dependabot de GitHub |
++
++## Relación con los conceptos de computación en la nube
++- **SaaS:** el producto final que usan las clínicas (el prototipo).
++- **PaaS:** Vercel y Supabase sobre los que se construye, sin gestionar servidores.
++- **IaaS:** infraestructura subyacente (AWS en Vercel/Supabase); solo se administraría directamente si se migrara a máquinas virtuales propias.
+diff --git a/docs/ACTIVIDAD5_OWASP.md b/docs/ACTIVIDAD5_OWASP.md
+new file mode 100644
+index 0000000..f1da603
+--- /dev/null
++++ b/docs/ACTIVIDAD5_OWASP.md
+@@ -0,0 +1,50 @@
++# Actividad 5 – OWASP
++
++## 1. ¿Qué es OWASP?
++- **Origen:** *Open Worldwide Application Security Project* (antes *Open Web Application Security Project*). Fue fundado en 2001 y se constituyó como fundación sin fines de lucro en Estados Unidos en 2004.
++- **Objetivos:** mejorar la seguridad del software mediante proyectos, documentación, herramientas y estándares abiertos, gratuitos y mantenidos por voluntarios.
++- **Alcance:** comunidad global con capítulos locales (incluyendo Latinoamérica). Sus proyectos más conocidos son OWASP Top 10, ASVS, Cheat Sheet Series, ZAP (escáner), Dependency‑Check y SAMM.
++- **Ejemplo de aplicación en este proyecto:** las políticas RLS por rol (A01) y el bloqueo tras 3 intentos fallidos (A07) se diseñaron siguiendo sus recomendaciones.
++
++## 2. OWASP Top 10 – edición 2025 (la más reciente)
++| ID | Categoría | Descripción resumida |
++|----|-----------|----------------------|
++| A01 | Broken Access Control | Usuarios que acceden a datos o funciones que no les corresponden (saltarse permisos, IDOR, escalamiento de privilegios). |
++| A02 | Security Misconfiguration | Configuraciones inseguras o por defecto: servicios abiertos, cabeceras ausentes, mensajes de error detallados. |
++| A03 | Software Supply Chain Failures | Fallos en dependencias, procesos de compilación o distribución (paquetes comprometidos, CI/CD sin proteger). |
++| A04 | Cryptographic Failures | Ausencia o mal uso de cifrado: datos sensibles sin proteger, contraseñas sin hash, algoritmos débiles. |
++| A05 | Injection | Datos no confiables interpretados como código (SQL, comandos, XSS). |
++| A06 | Insecure Design | Fallos de diseño y de lógica de negocio que ninguna implementación perfecta corrige; falta de modelado de amenazas. |
++| A07 | Authentication Failures | Debilidades en login y sesiones: fuerza bruta, contraseñas débiles, sesiones sin expiración. |
++| A08 | Software or Data Integrity Failures | Código o datos aceptados sin verificar su integridad (actualizaciones sin firma, deserialización insegura). |
++| A09 | Security Logging & Alerting Failures | Falta de registros y alertas que impiden detectar y responder a ataques. |
++| A10 | Mishandling of Exceptional Conditions | Manejo inadecuado de errores y condiciones anómalas: fallos que revelan información o dejan el sistema en estado inseguro. |
++
++### Las 3 vulnerabilidades más relevantes para Patitas Felices
++| Riesgo | Por qué es relevante | Mitigación en el prototipo |
++|--------|---------------------|----------------------------|
++| **A01 Broken Access Control** | Hay 4 roles con datos muy distintos (finanzas y usuarios solo para el Administrador; fichas clínicas solo para personal clínico). Un fallo expone datos personales y financieros. | Matriz `ROLES_PERMISOS`; guardia de ruta `moduloVisible`; selector de rol solo para el Administrador real; cuentas nuevas con rol mínimo; **políticas RLS por rol** en PostgreSQL (`rol_actual()`). |
++| **A07 Authentication Failures** | El sistema se expone en internet y maneja cuentas del personal; la fuerza bruta es el ataque más probable. | Bloqueo automático tras 3 intentos fallidos (RF04), cuentas desactivables (RF03), Supabase Auth con JWT para cuentas reales. |
++| **A06 Insecure Design** | La lógica de negocio (stock, cobros, agenda) puede manipularse: stock negativo, doble reserva de horario, abonos mayores al total. | Validación de colisión de horarios (RF11), `CHECK` en BD (stock ≥ 0, cantidad > 0, totales ≥ 0), flujo de cobro con saldo pendiente validado. |
++
++> **Limitación reconocida (A04/A07):** en el prototipo, las cuentas internas de demostración se guardan en el navegador (`localStorage`) con contraseña en texto plano para poder realizar la demo sin servidor. **En producción todas las cuentas deben pasar por Supabase Auth** (hash bcrypt) y el bloqueo debe aplicarse en el servidor.
++
++## 3. OWASP ASVS (Application Security Verification Standard)
++- **Qué es:** estándar abierto con una lista de requisitos de seguridad verificables para aplicaciones web, organizado en capítulos y 3 niveles de rigor (L1 básico, L2 estándar para datos sensibles, L3 alto aseguramiento). La versión vigente es la **5.0 (2025)**.
++- **Para qué sirve:** como lista de chequeo para diseñar y probar la seguridad, como base para contratos y auditorías, y para medir el avance en forma objetiva. Por manejar datos personales, este proyecto apunta a **nivel 2**.
++
++### Controles ASVS aplicables al prototipo
++| # | Capítulo ASVS 5.0 | Control | Cómo se aplica |
++|---|-------------------|---------|----------------|
++| 1 | V6 Authentication | Requisitos de contraseña y defensa contra fuerza bruta / bloqueo de cuenta. | Bloqueo tras 3 intentos (RF04); contraseñas gestionadas por Supabase Auth. |
++| 2 | V8 Authorization | Control de acceso aplicado en el servidor, con mínimo privilegio y denegación por defecto. | Políticas RLS por rol; cuenta sin rol ⇒ sin acceso; frontend solo refleja los permisos. |
++| 3 | V16 Security Logging and Error Handling | Registrar eventos de seguridad y no revelar detalles internos en errores. | Mensajes de error genéricos al usuario; registros de movimientos de stock y ventas con responsable y fecha; logs de Supabase. |
++| 4 | V1 Encoding and Sanitization / V2 Validation | Validar entradas y evitar inyección. | React escapa la salida por defecto (no se usa `dangerouslySetInnerHTML`); consultas parametrizadas vía supabase‑js; validaciones de formularios y `CHECK` en BD. |
++| 5 | V13 Configuration | Secretos fuera del código y configuración segura. | Variables `VITE_*` en `.env` (ignorado por Git, ver `.env.example`); la clave `service_role` nunca va al frontend. |
++
++> Los números de sección exactos de cada requisito (p. ej. 6.2.1) deben citarse desde el documento oficial en <https://asvs.dev> al redactar el informe.
++
++## Fuentes
++- OWASP Foundation. *OWASP Top 10:2025*. https://top10.owasp.org/2025/
++- OWASP Foundation. *Application Security Verification Standard 5.0*. https://asvs.dev
++- OWASP Foundation. *About OWASP*. https://owasp.org/about/
+diff --git a/package-lock.json b/package-lock.json
+index 9738ba8..7dba0a3 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -48,7 +48,6 @@
+       "integrity": "sha512-j1nvOQCZYSgp7HLmisnCXFTpVvFODiijQ9QHkORfGKWH6YDtskTEeCJS7eV545GZ9UBzrq0e2xsOd5QQ5PjIqw==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "@babel/code-frame": "^7.29.7",
+         "@babel/generator": "^7.29.13",
+@@ -1361,7 +1360,6 @@
+         }
+       ],
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "baseline-browser-mapping": "^2.11.37",
+         "caniuse-lite": "^1.0.30001826",
+@@ -1625,7 +1623,6 @@
+       "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "engines": {
+         "node": ">=12"
+       },
+@@ -1667,7 +1664,6 @@
+       "resolved": "https://registry.npmjs.org/react/-/react-19.3.1.tgz",
+       "integrity": "sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==",
+       "license": "MIT",
+-      "peer": true,
+       "engines": {
+         "node": ">=0.10.0"
+       }
+@@ -1826,7 +1822,6 @@
+       "integrity": "sha512-RtsraAwEG68idOA6iUOoIpOlcSKROnf815aIq9qHTSrDNpLoBrBa12suyfcEd8qn0xwOVQI1Yhm1GbmTjF600A==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "esbuild": "^0.25.0",
+         "fdir": "^6.4.4",
+diff --git a/src/App.jsx b/src/App.jsx
+index f7758f1..0e5be2c 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -36,6 +36,8 @@ function App() {
+   const [alertaGlobal, setAlertaGlobal] = useState(null)
+   const [modoOffline, setModoOffline] = useState(false)
+   const [moduloActual, setModuloActual] = useState('dashboard')
++  // Rol con el que realmente se autenticó la sesión (el selector de rol demo no puede ampliarlo)
++  const [rolSesion, setRolSesion] = useState(null)
+ 
+   // 2. Estado de Datos Clínicos con Caché Local Sincronizado (RNF04, RNF07)
+   const [usuarios, setUsuarios] = useState(() => loadLocal('vet_usuarios_v3', INITIAL_USUARIOS))
+@@ -149,7 +151,7 @@ function App() {
+         return
+       }
+       if (u.bloqueado) {
+-        notificar('error', `SEGURIDAD (RF04 / OWASP ASVS V2.2.1): Cuenta bloqueada por superar 3 intentos fallidos. Solicite desbloqueo al Administrador.`)
++        notificar('error', `SEGURIDAD (RF04 / OWASP ASVS v5 cap. V6 Autenticación): Cuenta bloqueada por superar 3 intentos fallidos. Solicite desbloqueo al Administrador.`)
+         return
+       }
+       if (u.pass !== passLogin) {
+@@ -170,6 +172,7 @@ function App() {
+       copia[idx] = { ...u, intentos: 0 }
+       setUsuarios(copia)
+       setUsuarioActivo(copia[idx])
++      setRolSesion(copia[idx].rol)
+       setRespTarea(copia[idx].correo)
+       setModuloActual('dashboard')
+       cargarTareasSupabase()
+@@ -190,11 +193,12 @@ function App() {
+         nombre: `Usuario Supabase (${data.user.email})`,
+         rut: '19.000.000-1',
+         correo: data.user.email,
+-        rol: 'Administrador',
++        rol: 'Asistente', // mínimo privilegio por defecto (OWASP A01: denegar por defecto)
+         especialidad: 'Cuenta Autenticada Supabase JWT',
+         activo: true
+       }
+       setUsuarioActivo(perfilSupabase)
++      setRolSesion(perfilSupabase.rol)
+       setRespTarea(data.user.email)
+       cargarTareasSupabase()
+       notificar('success', `Autenticado vía Supabase Auth JWT (${data.user.email}). Políticas RLS activas.`)
+@@ -209,6 +213,7 @@ function App() {
+       setUsuarios(desbloq)
+     }
+     setUsuarioActivo({ ...u, intentos: 0, bloqueado: false })
++    setRolSesion(u.rol)
+     setRespTarea(u.correo)
+     setModuloActual('dashboard')
+     cargarTareasSupabase()
+@@ -227,7 +232,7 @@ function App() {
+       copia[idx] = { ...u, intentos: nuevos, bloqueado: bloq }
+       setUsuarios(copia)
+       if (bloq) {
+-        notificar('error', `DEMO RF04: Cuenta ${u.correo} BLOQUEADA tras 3 intentos fallidos consecutivos (OWASP ASVS V2.2.1).`)
++        notificar('error', `DEMO RF04: Cuenta ${u.correo} BLOQUEADA tras 3 intentos fallidos consecutivos (OWASP ASVS v5 cap. V6 Autenticación).`)
+       } else {
+         notificar('warning', `DEMO RF04: Intento fallido ${nuevos}/3 registrado para ${u.correo}.`)
+       }
+@@ -237,11 +242,17 @@ function App() {
+   async function cerrarSesionCompleta() {
+     await supabase.auth.signOut().catch(() => {})
+     setUsuarioActivo(null)
++    setRolSesion(null)
+     setCorreoLogin('')
+     setPassLogin('')
+   }
+ 
+   function cambiarRolEnVivo(nuevoRol) {
++    // Control de acceso: solo una sesión autenticada como Administrador puede previsualizar otros roles
++    if (rolSesion !== 'Administrador' || !ROLES_PERMISOS[nuevoRol]) {
++      notificar('error', 'RESTRICCIÓN (OWASP A01): solo el Administrador puede previsualizar otros roles.')
++      return
++    }
+     const encontrado = usuarios.find(u => u.rol === nuevoRol) || {
+       ...usuarioActivo,
+       rol: nuevoRol,
+@@ -805,10 +816,13 @@ function App() {
+     )
+   }
+ 
+-  const permisosRol = ROLES_PERMISOS[usuarioActivo.rol] || ROLES_PERMISOS.Administrador
++  const permisosRol = ROLES_PERMISOS[usuarioActivo.rol] || ROLES_PERMISOS.Asistente
+   const mascotaActivaObj = mascotas.find(m => m.id === mascotaFichaSel) || mascotas[0]
+   const clienteMascotaActiva = clientes.find(c => c.id === mascotaActivaObj?.clienteId)
+ 
++  // Guardia de ruta: nunca se renderiza un módulo que el rol no tenga permitido (OWASP A01)
++  const moduloVisible = permisosRol.modulos.includes(moduloActual) ? moduloActual : 'dashboard'
++
+   const MENU_ITEMS = [
+     { id: 'dashboard', label: '1. Panel General Clínica', badge: 'KPIs' },
+     { id: 'clientes', label: '2. Clientes y Mascotas', badge: `${mascotas.length}` },
+@@ -867,7 +881,7 @@ function App() {
+         </div>
+ 
+         <div className="sidebar-footer">
+-          <div>Supabase: <strong>lgfsicqrpfqfeqjdrgoe</strong></div>
++          <div>Backend: <strong>Supabase (PostgreSQL + Auth)</strong></div>
+           <div>Protección: <strong>RLS + JWT + Ley 21.719</strong></div>
+         </div>
+       </aside>
+@@ -885,6 +899,7 @@ function App() {
+               {modoOffline ? '⚡ Modo Sin Conexión Activo (Caché Local RNF04)' : '🟢 Supabase Cloud + RLS Sincronizado'}
+             </span>
+ 
++            {rolSesion === 'Administrador' && (
+             <div className="role-switcher-bar">
+               <strong>Cambiar Rol (Demo):</strong>
+               <select value={usuarioActivo.rol} onChange={(e) => cambiarRolEnVivo(e.target.value)}>
+@@ -894,6 +909,7 @@ function App() {
+                 <option value="Asistente">Asistente (Vacunas y Stock)</option>
+               </select>
+             </div>
++            )}
+ 
+             <button type="button" className="btn-danger-vet" onClick={cerrarSesionCompleta}>
+               Cerrar sesión
+@@ -911,7 +927,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 1: DASHBOARD GENERAL
+               =============================================================== */}
+-          {moduloActual === 'dashboard' && (
++          {moduloVisible === 'dashboard' && (
+             <div>
+               <div className="kpi-grid">
+                 <div className="kpi-card urgent">
+@@ -1061,7 +1077,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 2: CLIENTES Y MASCOTAS (CU03 | RF05-RF09, RF16, RNF03)
+               =============================================================== */}
+-          {moduloActual === 'clientes' && (
++          {moduloVisible === 'clientes' && (
+             <div>
+               <div className="card-panel">
+                 <h3>
+@@ -1214,7 +1230,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 3: AGENDA DE CITAS Y URGENCIAS (CU04, CU05, CU06, CU11)
+               =============================================================== */}
+-          {moduloActual === 'citas' && (
++          {moduloVisible === 'citas' && (
+             <div className="panel-grid-sidebar">
+               <div className="card-panel">
+                 <h3>
+@@ -1372,7 +1388,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 4: FICHAS CLÍNICAS Y VACUNAS (CU07, CU08, CU09 | RF16-RF20)
+               =============================================================== */}
+-          {moduloActual === 'fichas' && (
++          {moduloVisible === 'fichas' && (
+             <div>
+               <div className="card-panel">
+                 <h3>
+@@ -1533,7 +1549,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 5: RECORDATORIOS AUTOMÁTICOS (CU10 | RF22-RF24)
+               =============================================================== */}
+-          {moduloActual === 'recordatorios' && (
++          {moduloVisible === 'recordatorios' && (
+             <div>
+               <div className="card-panel">
+                 <h3>
+@@ -1586,7 +1602,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 6: INVENTARIO, KARDEX Y ALERTAS (CU12, CU13, CU14 | RF25-RF30)
+               =============================================================== */}
+-          {moduloActual === 'inventario' && (
++          {moduloVisible === 'inventario' && (
+             <div>
+               <div className="panel-grid-2">
+                 <div className="card-panel">
+@@ -1758,7 +1774,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 7: VENTAS, COBROS Y GASTOS (CU15, CU16 | RF31-RF33)
+               =============================================================== */}
+-          {moduloActual === 'finanzas' && (
++          {moduloVisible === 'finanzas' && (
+             <div>
+               <div className="panel-grid-2">
+                 <div className="card-panel">
+@@ -1927,7 +1943,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 8: REPORTES EXPORTABLES A EXCEL / PDF (CU17 | RF34)
+               =============================================================== */}
+-          {moduloActual === 'reportes' && (
++          {moduloVisible === 'reportes' && (
+             <div>
+               <div className="card-panel">
+                 <h3>
+@@ -1989,7 +2005,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 9: USUARIOS, ROLES Y SEGURIDAD (CU02 | RF01-RF04)
+               =============================================================== */}
+-          {moduloActual === 'usuarios' && (
++          {moduloVisible === 'usuarios' && (
+             <div className="panel-grid-sidebar">
+               <div className="card-panel">
+                 <h3>
+@@ -2078,7 +2094,7 @@ function App() {
+           {/* ===============================================================
+               MÓDULO 10: MIS TAREAS SUPABASE AUTH & RLS (ETAPA 5 GRUPO 5)
+               =============================================================== */}
+-          {moduloActual === 'tareas_rls' && (
++          {moduloVisible === 'tareas_rls' && (
+             <div className="panel-grid-2">
+               <div className="card-panel">
+                 <h3>
+diff --git a/supabase_veterinaria_patitas_felices.sql b/supabase_veterinaria_patitas_felices.sql
+index c13b7e3..f4126aa 100644
+--- a/supabase_veterinaria_patitas_felices.sql
++++ b/supabase_veterinaria_patitas_felices.sql
+@@ -230,7 +230,29 @@ ALTER TABLE public.ventas ENABLE ROW LEVEL SECURITY;
+ ALTER TABLE public.gastos ENABLE ROW LEVEL SECURITY;
+ ALTER TABLE public.recordatorios ENABLE ROW LEVEL SECURITY;
+ 
+--- Politicas RLS para personal autenticado de la clinica (TO authenticated)
++-- =============================================================================
++-- 11. CONTROL DE ACCESO POR ROL (RBAC) EN RLS  -  OWASP A01 (Broken Access Control)
++-- Reemplaza las politicas "USING (true)" por politicas que consultan el rol real
++-- del usuario autenticado (usuarios_clinica.auth_user_id = auth.uid()).
++-- Denegar por defecto: sin fila en usuarios_clinica (o cuenta inactiva/bloqueada)
++-- => sin acceso a ninguna tabla clinica.
++-- =============================================================================
++
++-- Funcion auxiliar: rol del usuario autenticado. SECURITY DEFINER para evitar
++-- recursion de RLS sobre usuarios_clinica; search_path fijo por seguridad.
++CREATE OR REPLACE FUNCTION public.rol_actual()
++RETURNS TEXT
++LANGUAGE sql STABLE SECURITY DEFINER
++SET search_path = public
++AS $$
++    SELECT rol FROM public.usuarios_clinica
++    WHERE auth_user_id = auth.uid() AND activo = true AND bloqueado = false
++    LIMIT 1;
++$$;
++REVOKE ALL ON FUNCTION public.rol_actual() FROM PUBLIC;
++GRANT EXECUTE ON FUNCTION public.rol_actual() TO authenticated;
++
++-- Limpieza de politicas permisivas de versiones anteriores
+ DO $$
+ DECLARE
+     t TEXT;
+@@ -241,9 +263,51 @@ BEGIN
+     ]
+     LOOP
+         EXECUTE format('DROP POLICY IF EXISTS "Personal autenticado lectura %I" ON public.%I;', t, t);
+-        EXECUTE format('CREATE POLICY "Personal autenticado lectura %I" ON public.%I FOR SELECT TO authenticated USING (true);', t, t);
+-
+         EXECUTE format('DROP POLICY IF EXISTS "Personal autenticado escritura %I" ON public.%I;', t, t);
+-        EXECUTE format('CREATE POLICY "Personal autenticado escritura %I" ON public.%I FOR ALL TO authenticated USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);', t, t);
+     END LOOP;
+ END $$;
++
++-- Procedimiento que crea 1 politica de lectura y 1 de escritura por tabla,
++-- segun la matriz de roles definida en src/data/seedVeterinaria.js (ROLES_PERMISOS).
++CREATE OR REPLACE PROCEDURE public.aplicar_politicas_rol(
++    tabla TEXT, roles_lectura TEXT[], roles_escritura TEXT[]
++)
++LANGUAGE plpgsql AS $$
++BEGIN
++    EXECUTE format('DROP POLICY IF EXISTS "rbac_lectura" ON public.%I;', tabla);
++    EXECUTE format('DROP POLICY IF EXISTS "rbac_escritura" ON public.%I;', tabla);
++    EXECUTE format(
++        'CREATE POLICY "rbac_lectura" ON public.%I FOR SELECT TO authenticated USING (public.rol_actual() = ANY (%L::text[]));',
++        tabla, roles_lectura);
++    EXECUTE format(
++        'CREATE POLICY "rbac_escritura" ON public.%I FOR ALL TO authenticated USING (public.rol_actual() = ANY (%L::text[])) WITH CHECK (public.rol_actual() = ANY (%L::text[]));',
++        tabla, roles_escritura, roles_escritura);
++END $$;
++
++--                                    tabla               lectura                                                   escritura
++CALL public.aplicar_politicas_rol('clientes',          ARRAY['Administrador','Veterinario','Recepcionista'],     ARRAY['Administrador','Recepcionista']);
++CALL public.aplicar_politicas_rol('mascotas',          ARRAY['Administrador','Veterinario','Recepcionista','Asistente'], ARRAY['Administrador','Recepcionista','Veterinario']);
++CALL public.aplicar_politicas_rol('citas',             ARRAY['Administrador','Veterinario','Recepcionista','Asistente'], ARRAY['Administrador','Recepcionista','Veterinario']);
++CALL public.aplicar_politicas_rol('atenciones',        ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Veterinario']);
++CALL public.aplicar_politicas_rol('vacunas',           ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Veterinario','Asistente']);
++CALL public.aplicar_politicas_rol('productos',         ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador']);
++CALL public.aplicar_politicas_rol('movimientos_stock', ARRAY['Administrador','Veterinario','Asistente'],         ARRAY['Administrador','Asistente']);
++CALL public.aplicar_politicas_rol('ventas',            ARRAY['Administrador','Recepcionista'],                   ARRAY['Administrador','Recepcionista']);
++CALL public.aplicar_politicas_rol('gastos',            ARRAY['Administrador'],                                   ARRAY['Administrador']);
++CALL public.aplicar_politicas_rol('recordatorios',     ARRAY['Administrador','Recepcionista'],                   ARRAY['Administrador','Recepcionista']);
++
++-- usuarios_clinica: el Administrador gestiona todo; cada usuario solo ve su propia fila.
++DROP POLICY IF EXISTS "rbac_lectura" ON public.usuarios_clinica;
++DROP POLICY IF EXISTS "rbac_escritura" ON public.usuarios_clinica;
++CREATE POLICY "rbac_lectura" ON public.usuarios_clinica FOR SELECT TO authenticated
++    USING (public.rol_actual() = 'Administrador' OR auth_user_id = auth.uid());
++CREATE POLICY "rbac_escritura" ON public.usuarios_clinica FOR ALL TO authenticated
++    USING (public.rol_actual() = 'Administrador') WITH CHECK (public.rol_actual() = 'Administrador');
++
++-- Integridad adicional (OWASP A06 Insecure Design): valores no negativos
++ALTER TABLE public.productos DROP CONSTRAINT IF EXISTS productos_stock_no_negativo;
++ALTER TABLE public.productos ADD CONSTRAINT productos_stock_no_negativo CHECK (stock >= 0 AND precio >= 0);
++ALTER TABLE public.movimientos_stock DROP CONSTRAINT IF EXISTS mov_cantidad_positiva;
++ALTER TABLE public.movimientos_stock ADD CONSTRAINT mov_cantidad_positiva CHECK (cantidad > 0);
++ALTER TABLE public.ventas DROP CONSTRAINT IF EXISTS ventas_total_no_negativo;
++ALTER TABLE public.ventas ADD CONSTRAINT ventas_total_no_negativo CHECK (total >= 0 AND saldo_pendiente >= 0);
